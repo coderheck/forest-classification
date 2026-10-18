@@ -26,6 +26,25 @@ def get_local_ip():
 
 
 # =========================
+# helper: crop frame to center
+# =========================
+def center_crop(frame, crop_ratio=0.5):
+    """
+    Keep the full height and crop the width around the center.
+
+    crop_ratio=0.5 keeps the central 50% of the width
+    and 100% of the height.
+    """
+    height, width = frame.shape[:2]
+
+    crop_width = int(width * crop_ratio)
+
+    x1 = (width - crop_width) // 2
+    x2 = x1 + crop_width
+
+    return frame[:, x1:x2]
+
+# =========================
 # RTMP STREAM WITH AUTO-RECONNECT
 # =========================
 class ThreadedRTMPStream:
@@ -191,7 +210,8 @@ while True:
     if frame_count % 10 == 0:
         try:
             # set displayed forest type
-            small_frame = cv2.resize(frame, (224, 224))
+            inferFrame = center_crop(frame)
+            small_frame = cv2.resize(inferFrame, (384, 384))
             results = model(small_frame, verbose=False)
             probs = results[0].probs
             class_id = probs.top1
@@ -251,7 +271,24 @@ while True:
         2
     )
 
-    cv2.imshow("Live Drone RTMP Feed", frame)
+    # show the parts thats being cropped for inference
+    display_frame = frame.copy()
+    
+    height, width = frame.shape[:2]
+    crop_width = int(width * 0.5)
+
+    x1 = (width - crop_width) // 2
+    x2 = x1 + crop_width
+
+    cv2.rectangle(
+        display_frame,
+        (x1, 0),
+        (x2, height - 1),
+        (0, 255, 0),
+        2
+    )
+
+    cv2.imshow("Live Drone RTMP Feed", display_frame)
 
     if cv2.waitKey(1) & 0xFF == 27:  # Press ESC to exit
         break

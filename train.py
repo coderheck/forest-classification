@@ -30,6 +30,6 @@ model.train(
     mosaic = 0,
     erasing = 0,
     hsv_h = 0,
-    hsv_s = 0.15,
-    # hsv_v = 0.5,
+    hsv_s = 0,
+    hsv_v = 0,
 )

@@ -301,98 +301,52 @@ def density_to_color(class_name):
 # GENERATE HEATMAP CROPS
 # ============================================================
 
+INFERENCE_WIDTH_RATIO = 0.5
 
 def get_heatmap_crops(frame):
 
     height, width = frame.shape[:2]
 
-    crops = []
-    positions = []
+    crop_width = int(width * INFERENCE_WIDTH_RATIO)
+    x1 = (width - crop_width) // 2
+    x2 = x1 + crop_width
 
-    # Base tile size.
-    #
-    # For a 3x3 grid, each tile is roughly 1/3 of the
-    # screen. Increase it using the overlap factor.
+    crop = frame[:, x1:x2]
 
-    base_w = width / HEATMAP_COLS
-    base_h = height / HEATMAP_ROWS
-
-    crop_w = int(base_w * (1.0 + HEATMAP_OVERLAP))
-    crop_h = int(base_h * (1.0 + HEATMAP_OVERLAP))
-
-    # Generate evenly distributed centers.
-    x_centers = np.linspace(crop_w // 2, width - crop_w // 2, HEATMAP_COLS).astype(int)
-
-    y_centers = np.linspace(crop_h // 2, height - crop_h // 2, HEATMAP_ROWS).astype(int)
-
-    for cy in y_centers:
-
-        for cx in x_centers:
-
-            x1 = max(0, cx - crop_w // 2)
-            y1 = max(0, cy - crop_h // 2)
-            x2 = min(width, x1 + crop_w)
-            y2 = min(height, y1 + crop_h)
-
-            # Correct the coordinates if we hit the edge.
-            x1 = max(0, x2 - crop_w)
-            y1 = max(0, y2 - crop_h)
-
-            crop = frame[y1:y2, x1:x2]
-
-            crops.append(crop)
-
-            positions.append((x1, y1, x2, y2))
-
-    return crops, positions
+    return [crop], [(x1, 0, x2, height)]
 
 
 # ============================================================
-# HEATMAP INFERENCE
+# CENTER-CROP INFERENCE
 # ============================================================
-
 
 def predict_heatmap(frame):
-
     crops, positions = get_heatmap_crops(frame)
 
     try:
+        # Match mainRunner.py's classification input size.
+        inference_images = [
+            cv2.resize(crop, (384, 384))
+            for crop in crops
+        ]
 
-        # IMPORTANT:
-        #
-        # Send all crops to YOLO at once instead of doing:
-        #
-        # model(crop1)
-        # model(crop2)
-        # model(crop3)
-        #
-        # etc.
-        #
-        # This allows Ultralytics/PyTorch to batch the inference.
-
-        results = model(crops, verbose=False)
+        results = model(inference_images, verbose=False)
 
     except Exception as e:
-
-        print("HEATMAP YOLO ERROR:", e)
-
+        print("CENTER-CROP YOLO ERROR:", e)
         return None
 
     predictions = []
 
     for result, position in zip(results, positions):
-
         probs = result.probs
-
         class_id = probs.top1
 
-        confidence = float(probs.top1conf)
-
-        class_name = model.names[class_id]
-
-        predictions.append(
-            {"class": class_name, "confidence": confidence, "position": position}
-        )
+        predictions.append({
+            "class": str(model.names[class_id]).strip().lower(),
+            "confidence": float(probs.top1conf),
+            "position": position,
+        })
 
     return predictions
 
@@ -516,44 +470,28 @@ with mss.MSS() as sct:
         frame_count += 1
 
         # ====================================================
-        # HEATMAP
+        # CENTER-CROP INFERENCE
         # ====================================================
 
         if frame_count % HEATMAP_INTERVAL == 0:
-            heatmap_predictions = predict_heatmap(frame)
+            heatmap_predictions = predict_heatmap(processed)
 
         # ====================================================
         # DRAW HEATMAP
         # ====================================================
 
-        display_frame = processed
+        display_frame = processed.copy()
 
         if heatmap_predictions is not None:
-            display_frame = draw_heatmap(display_frame, heatmap_predictions)
+            display_frame = draw_heatmap(
+                display_frame,
+                heatmap_predictions
+            )
 
-        # ====================================================
-        # GLOBAL FOREST CLASS
-        # ====================================================
-        #
-        # For now, use the center heatmap tile as the
-        # "current forest class".
-        #
-        # With a 3x3 grid:
-        #
-        # 0 1 2
-        # 3 4 5
-        # 6 7 8
-        #
-        # Tile 4 is the center.
-        #
-        # Later we can calculate the overall class from
-        # all nine predictions instead.
-        # ====================================================
-
-        if heatmap_predictions is not None:
-            center = heatmap_predictions[4]
-            forest_class = center["class"]
-            conf = center["confidence"]
+        # Current forest classification comes from the center crop.
+        if heatmap_predictions:
+            forest_class = heatmap_predictions[0]["class"]
+            conf = heatmap_predictions[0]["confidence"]
 
         # ====================================================
         # YOLO
@@ -585,7 +523,7 @@ with mss.MSS() as sct:
 
         if frame_count % 30 == 0:
             try:
-                crop = get_ocr_crop(frame)
+                crop = get_ocr_crop(processed)
                 if crop.size != 0:
                     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
                     # Increase contrast for OCR
@@ -626,7 +564,7 @@ with mss.MSS() as sct:
         y1 = int(height * OCR_Y1)
         y2 = int(height * OCR_Y2)
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
+        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
 
         # ====================================================
         # HUD
