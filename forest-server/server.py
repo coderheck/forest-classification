@@ -1,3 +1,5 @@
+# server script
+
 import os
 import sqlite3
 from contextlib import asynccontextmanager

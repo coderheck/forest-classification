@@ -228,3 +228,6 @@ forest_heatmap.html
 forest.db
 *.csv
 *.db
+*server_*
+*clearPoints*
+*test_*
