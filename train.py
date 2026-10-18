@@ -8,7 +8,7 @@ model.train(
     # ----- parameter -----
     data = "forest_dataset",
     epochs = 100,
-    imgsz = 384,
+    imgsz = 420,
     batch = 9,
     device = [0],
     seed = 1727,
@@ -19,7 +19,6 @@ model.train(
     exist_ok = True, # ghi đè folder weight/overwrite weight folder
     val = True,
     workers = 0,
-    lr0 = 0.0001,
     optimizer = "auto",
     cos_lr = True,
     
@@ -31,6 +30,6 @@ model.train(
     mosaic = 0,
     erasing = 0,
     hsv_h = 0,
-    # hsv_s = 0.5,
+    hsv_s = 0.15,
     # hsv_v = 0.5,
 )

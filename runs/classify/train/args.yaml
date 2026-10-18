@@ -6,7 +6,7 @@ epochs: 100
 time: null
 patience: 35
 batch: 9
-imgsz: 384
+imgsz: 420
 save: true
 save_period: -1
 cache: false
@@ -72,7 +72,7 @@ simplify: true
 opset: null
 workspace: null
 nms: false
-lr0: 0.0001
+lr0: 0.01
 lrf: 0.01
 momentum: 0.937
 weight_decay: 0.0005
@@ -94,7 +94,7 @@ dgrad: 0.5
 dlam: 1.0
 nbs: 64
 hsv_h: 0
-hsv_s: 0.7
+hsv_s: 0.15
 hsv_v: 0.4
 degrees: 90
 translate: 0.1
