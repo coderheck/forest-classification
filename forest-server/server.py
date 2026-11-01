@@ -110,6 +110,38 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Forest Telemetry API", lifespan=lifespan)
 
 
+@app.get("/", response_class=HTMLResponse)
+def homepage():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Forest Monitoring</title>
+            <style>
+                body, p {
+                    margin: 0;
+                    background: powderblue;
+                    color: #000000;
+                    font-family: Georgia, sans-serif;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>hello forest!</h1>
+            <p>
+                <a href="/docs">all endpoints / hướng dẫn tất cả truy vấn</a> <br>
+                <a href="/heatmap">forest heatmap / bản đồ nhiệt rừng</a> <br>
+                <a href="/heatmap?cell_size=10">10m grid, with gap fill / ô cạnh 10m, dự đoán ô trống từ các ô xung quanh</a> <br>
+                <a href="/heatmap?cell_size=10&fill_gaps=false">10m grid, no gap fill / ô 10m, không dự đoán ô trống</a> <br>
+            </p>
+            <br>
+        </body>
+    </html>
+    """
+
+
 class Record(BaseModel):
     recorded_at: datetime | None = None
     latitude: float = Field(ge=-90, le=90)
