@@ -25,7 +25,7 @@ x2 = x1 + crop_width
 cropped = frame[:, x1:x2]
 
 # Resize to the same input size as mainRunner.py
-input_image = cv2.resize(cropped, (384, 384))  
+input_image = cv2.resize(cropped, (420, 420))  
 
 # ===== Predict =====
 results = model.predict(source=input_image, verbose=False)
