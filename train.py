@@ -8,7 +8,7 @@ model.train(
     # ----- parameter -----
     data = "forest_dataset",
     epochs = 100,
-    imgsz = 420,
+    imgsz = 480,
     batch = 9,
     device = [0],
     seed = 1727,

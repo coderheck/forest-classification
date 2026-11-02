@@ -211,7 +211,7 @@ while True:
         try:
             # set displayed forest type
             inferFrame = center_crop(frame)
-            small_frame = cv2.resize(inferFrame, (384, 384))
+            small_frame = cv2.resize(inferFrame, (480, 480))
             results = model(small_frame, verbose=False)
             probs = results[0].probs
             class_id = probs.top1
