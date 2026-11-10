@@ -11,6 +11,7 @@ from folium.plugins import HeatMap
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+import json
 
 import math
 
@@ -325,6 +326,65 @@ def score_color(score):
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
+# =========================
+# CARBON ESTIMATION
+# =========================
+
+TREE_TYPES = {
+    "acacia": "Acacia",
+    "tea": "Tea plant",
+    "fokienia": "Fokienia",
+    "birch": "Birch",
+}
+
+# Editable defaults.
+# Units: tonnes of CO2 equivalent per hectare per year.
+# Replace these zeroes with researched coefficients later.
+CARBON_COEFFICIENTS = {
+    "acacia": {
+        "sparse": 0.0,
+        "medium": 0.0,
+        "dense": 0.0,
+    },
+    "tea": {
+        "sparse": 0.0,
+        "medium": 0.0,
+        "dense": 0.0,
+    },
+    "fokienia": {
+        "sparse": 0.0,
+        "medium": 0.0,
+        "dense": 0.0,
+    },
+    "birch": {
+        "sparse": 0.0,
+        "medium": 0.0,
+        "dense": 0.0,
+    },
+}
+
+
+def interpolate_carbon_coefficient(score, coefficients):
+    """
+    Interpolate the coefficient using the existing density score.
+
+    0   = sparse
+    50  = medium
+    100 = dense
+    """
+
+    sparse = coefficients["sparse"]
+    medium = coefficients["medium"]
+    dense = coefficients["dense"]
+
+    if score <= 50:
+        ratio = score / 50
+        return sparse + (medium - sparse) * ratio
+
+    ratio = (score - 50) / 50
+    return medium + (dense - medium) * ratio
+
+
 @app.get("/heatmap", response_class=HTMLResponse)
 def forest_heatmap(
     cell_size: float = Query(default=20, ge=5, le=200), # min cạnh 5m (25m^2), max 200m (40000m^2 = 4ha)
@@ -444,6 +504,8 @@ def forest_heatmap(
         name=f"Forest density grid ({cell_size:g} m cells)"
     )
 
+    carbon_cells = []
+
     # Draw measured cells.
     for (ix, iy), cell in cells.items():
         south, west = unproject_coordinates(
@@ -455,7 +517,7 @@ def forest_heatmap(
 
         color = score_color(cell["score"])
 
-        folium.Rectangle(
+        rectangle = folium.Rectangle(
             bounds=[[south, west], [north, east]],
             color=color,
             weight=1,
@@ -466,13 +528,15 @@ def forest_heatmap(
                 f"Measured cell | Score: {cell['score']:.1f}/100"
                 f" | Observations: {cell['count']}"
             ),
-            popup=(
-                f"Status: Measured<br>"
-                f"Density score: {cell['score']:.1f}/100<br>"
-                f"Observations: {cell['count']}<br>"
-                f"Grid size: {cell_size:g} m"
-            ),
         ).add_to(layer)
+
+        carbon_cells.append({
+            "layer": rectangle.get_name(),
+            "score": cell["score"],
+            "count": cell["count"],
+            "status": "Measured",
+            "area": cell_size * cell_size,
+        })
 
     # Draw estimated cells with lower opacity so they are distinguishable.
     for (ix, iy), cell in estimated.items():
@@ -485,7 +549,7 @@ def forest_heatmap(
 
         color = score_color(cell["score"])
 
-        folium.Rectangle(
+        rectangle = folium.Rectangle(
             bounds=[[south, west], [north, east]],
             color=color,
             weight=1,
@@ -494,12 +558,15 @@ def forest_heatmap(
             fill_opacity=0.25,
             dash_array="4",
             tooltip=f"Estimated cell | Score: {cell['score']:.1f}/100",
-            popup=(
-                f"Status: Estimated from nearby measured cells<br>"
-                f"Estimated density score: {cell['score']:.1f}/100<br>"
-                f"Grid size: {cell_size:g} m"
-            ),
         ).add_to(layer)
+
+        carbon_cells.append({
+            "layer": rectangle.get_name(),
+            "score": cell["score"],
+            "count": 0,
+            "status": "Estimated",
+            "area": cell_size * cell_size,
+        })
 
     layer.add_to(m)
     folium.LayerControl(collapsed=False).add_to(m)
@@ -517,6 +584,334 @@ def forest_heatmap(
         Transparent dashed cells: estimated / Ô nét đứt: ước tính từ các ô xung quanh
     </div>
     """
+
+    m.get_root().html.add_child(folium.Element(legend))
+
+    # =========================
+    # CARBON ESTIMATOR INTERFACE
+    # =========================
+
+    coefficient_inputs = ""
+
+    for tree_key, tree_name in TREE_TYPES.items():
+        coefficient_inputs += f"""
+            <div class="coefficient-group" id="coeff-group-{tree_key}"
+                style="display:none;">
+
+        """
+
+        for density_name in ("sparse", "medium", "dense"):
+            value = CARBON_COEFFICIENTS[tree_key][density_name]
+
+            coefficient_inputs += f"""
+                <label class="coefficient-row">
+                    <span>{density_name.title()}</span>
+                    <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        class="carbon-coefficient"
+                        id="coeff-{tree_key}-{density_name}"
+                        value="{value}"
+                    >
+                </label>
+            """
+
+        # Close each tree group's div inside the loop.
+        coefficient_inputs += "</div>"
+
+    carbon_panel = f"""
+    <div id="carbon-panel">
+        <h3>Ước tính lượng tín chỉ carbon</h3>
+
+        <label for="tree-type">Loại cây trồng</label>
+        <select id="tree-type">
+            <option value="acacia">Cây keo</option>
+            <option value="tea">Cây chè</option>
+            <option value="fokienia">Cây pơ mu</option>
+            <option value="birch">Cây bạch dương</option>
+        </select>
+
+        <details open>
+            <summary>Hệ số tín chỉ carbon</summary>
+
+            <p class="carbon-note">
+                Editable values in tCO2e/ha/year.
+            </p>
+
+            {coefficient_inputs}
+        </details>
+
+        <div class="carbon-results">
+            <h4>Mức tín chỉ carbon trên diện tích đo thực:</h4>
+            <div class="carbon-value" id="measured-total">
+                0.000 tCO2e/year
+            </div>
+
+            <h4>Mức tín chỉ carbon trên diện tích được ước tính:</h4>
+            <div class="carbon-value" id="estimated-total">
+                0.000 tCO2e/year
+            </div>
+
+            <p id="carbon-area"></p>
+            <p id="carbon-cell-count"></p>
+        </div>
+
+        <p class="carbon-note">
+            Đây chỉ là kết quả ước tính đánh giá ban đầu, không phải số liệu chính thức.
+        </p>
+    </div>
+
+    <style>
+        #carbon-panel {{
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 9999;
+            width: 290px;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-sizing: border-box;
+            background: white;
+            padding: 14px;
+            border: 1px solid #888;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+        }}
+
+        #carbon-panel h3 {{
+            margin: 0 0 12px 0;
+        }}
+
+        #carbon-panel h4 {{
+            margin: 12px 0 5px 0;
+        }}
+
+        #carbon-panel select,
+        #carbon-panel input {{
+            box-sizing: border-box;
+            width: 100%;
+            padding: 6px;
+            margin: 5px 0 10px 0;
+        }}
+
+        .coefficient-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }}
+
+        .coefficient-row span {{
+            flex: 1;
+        }}
+
+        .coefficient-row input {{
+            width: 95px !important;
+        }}
+
+        .carbon-results {{
+            border-top: 1px solid #ccc;
+            margin-top: 10px;
+            padding-top: 5px;
+        }}
+
+        .carbon-value {{
+            font-size: 18px;
+            font-weight: bold;
+            color: #217a45;
+        }}
+
+        .carbon-note {{
+            color: #666;
+            font-size: 11px;
+            line-height: 1.4;
+        }}
+    </style>
+    """
+
+    m.get_root().html.add_child(
+        folium.Element(carbon_panel)
+    )
+
+    # =========================
+    # CARBON CALCULATION JAVASCRIPT
+    # =========================
+
+    carbon_data_json = json.dumps(carbon_cells)
+
+    carbon_script = r"""
+    const carbonCells = __CARBON_CELLS__;
+
+    const treeSelector = document.getElementById("tree-type");
+
+    const densityLevels = ["sparse", "medium", "dense"];
+
+    // Restore previously edited coefficients from this browser.
+    const storageKey = "forest_carbon_coefficients";
+
+    try {
+        const savedCoefficients = JSON.parse(
+            localStorage.getItem(storageKey) || "{}"
+        );
+
+        document.querySelectorAll(".carbon-coefficient").forEach(input => {
+            if (savedCoefficients[input.id] !== undefined) {
+                input.value = savedCoefficients[input.id];
+            }
+        });
+    } catch (error) {
+        console.warn("Could not restore carbon coefficients:", error);
+    }
+
+    function getCoefficients(tree) {
+        return {
+            sparse: Number(
+                document.getElementById(`coeff-${tree}-sparse`).value
+            ) || 0,
+
+            medium: Number(
+                document.getElementById(`coeff-${tree}-medium`).value
+            ) || 0,
+
+            dense: Number(
+                document.getElementById(`coeff-${tree}-dense`).value
+            ) || 0
+        };
+    }
+
+    function interpolateCoefficient(score, coefficients) {
+        if (score <= 50) {
+            const ratio = score / 50;
+
+            return coefficients.sparse +
+                (coefficients.medium - coefficients.sparse) * ratio;
+        }
+
+        const ratio = (score - 50) / 50;
+
+        return coefficients.medium +
+            (coefficients.dense - coefficients.medium) * ratio;
+    }
+
+    function updateCoefficientEditor() {
+        const selectedTree = treeSelector.value;
+
+        document.querySelectorAll(".coefficient-group").forEach(group => {
+            group.style.display = "none";
+        });
+
+        document.getElementById(
+            `coeff-group-${selectedTree}`
+        ).style.display = "block";
+    }
+
+    function calculateCarbon() {
+        const selectedTree = treeSelector.value;
+        const coefficients = getCoefficients(selectedTree);
+
+        let measuredTotal = 0;
+        let estimatedTotal = 0;
+
+        let measuredArea = 0;
+        let estimatedArea = 0;
+
+        let measuredCount = 0;
+        let estimatedCount = 0;
+
+        carbonCells.forEach(cell => {
+            const coefficient = interpolateCoefficient(
+                cell.score,
+                coefficients
+            );
+
+            // Convert square metres to hectares.
+            const areaInHectares = cell.area / 10000;
+
+            // Annual estimated CO2 removal for this cell.
+            const carbon = coefficient * areaInHectares;
+
+            if (cell.status === "Measured") {
+                measuredTotal += carbon;
+                measuredArea += cell.area;
+                measuredCount++;
+            } else {
+                estimatedTotal += carbon;
+                estimatedArea += cell.area;
+                estimatedCount++;
+            }
+
+            // Update the individual grid-cell popup.
+            const layer = window[cell.layer];
+
+            if (layer) {
+                const densityLabel =
+                    cell.score < 25 ? "Sparse" :
+                    cell.score < 75 ? "Medium" : "Dense";
+
+                const popup = `
+                    <b>${cell.status} cell</b><br>
+                    Tree type: ${selectedTree}<br>
+                    Density: ${densityLabel}<br>
+                    Density score: ${cell.score.toFixed(1)}/100<br>
+                    Area: ${cell.area.toFixed(1)} m²<br>
+                    Coefficient: ${coefficient.toFixed(3)}
+                    tCO2e/ha/year<br>
+                    <b>Estimated annual carbon removal:
+                    ${carbon.toFixed(5)} tCO2e/year</b>
+                `;
+
+                layer.bindPopup(popup);
+            }
+        });
+
+        document.getElementById("measured-total").textContent =
+            measuredTotal.toFixed(3) + " tCO2e/year";
+
+        document.getElementById("estimated-total").textContent =
+            estimatedTotal.toFixed(3) + " tCO2e/year";
+
+        document.getElementById("carbon-area").textContent =
+            "Diện tích được đo: " + measuredArea.toFixed(1) +
+            " m² | Diện tích được ước tính: " + estimatedArea.toFixed(1) + " m²";
+
+        document.getElementById("carbon-cell-count").textContent =
+            "Ô được đo: " + measuredCount +
+            " | Ô được ước tính: " + estimatedCount;
+    }
+
+    // Recalculate when the tree type changes.
+    treeSelector.addEventListener("change", () => {
+        updateCoefficientEditor();
+        calculateCarbon();
+    });
+
+    // Recalculate and save whenever a coefficient changes.
+    document.querySelectorAll(".carbon-coefficient").forEach(input => {
+        input.addEventListener("input", () => {
+            const values = {};
+
+            document.querySelectorAll(".carbon-coefficient").forEach(item => {
+                values[item.id] = item.value;
+            });
+
+            localStorage.setItem(storageKey, JSON.stringify(values));
+
+            calculateCarbon();
+        });
+    });
+
+    // Initial calculation.
+    updateCoefficientEditor();
+    calculateCarbon();
+    """.replace(
+        "__CARBON_CELLS__",
+        carbon_data_json
+    )
+
+    m.get_root().script.add_child(folium.Element(carbon_script))
 
     m.get_root().html.add_child(folium.Element(legend))
 
